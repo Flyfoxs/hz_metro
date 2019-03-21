@@ -72,6 +72,7 @@ def estimate_paras(pdq):
     return res
 
 
+@timed()
 def process_partition(paras):
     from numpy.linalg import LinAlgError
     day, direct, parition_id = paras
@@ -86,7 +87,8 @@ def process_partition(paras):
         for sn, order in enumerate(pdq):
             res = {}
             res['p'], res['d'], res['q'] = order
-            res['day'] = pd.to_datetime(day).day
+            res['day'] = 1+(pd.to_datetime(day) - pd.to_datetime('2019-01-01')).days
+            res['day_str'] = day
             res['week_day'] = pd.to_datetime(day).weekday()
             res['stationID'] = row['stationID']
             res['time_ex'] = row['time_ex']

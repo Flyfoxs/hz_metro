@@ -5,7 +5,12 @@ roadmap_file = './input/Metro_roadMap.csv'
 
 thred_num = 10
 
-partition_num = 10
+partition_num = 24
+
+test_feature_set = [22, 25, 28, 29]
+
+
+sub_col = ['stationID',	'startTime',	'endTime',	'outNums',	'inNums']
 
 mysql_pass = 'Had00p!!'
 #11664

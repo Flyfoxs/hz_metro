@@ -96,14 +96,65 @@ def merge_days(days_list):
     return submit
 
 
-def get_summay(col_list=['hours']):
+@lru_cache()
+def get_test_set(direct):
+    return get_feature_set(direct, test_feature_set).copy()
 
-    pass
+
+@lru_cache()
+def get_train_set(direct):
+    tmp1 = get_feature_set(direct, [item - 7 for item in test_feature_set]).copy()
+
+    tmp2 = get_feature_set(direct, [item - 14 for item in test_feature_set]).copy()
+
+    return pd.concat([tmp1, tmp2])
 
 
-def merge_in_out(date):
-    pass
+def get_feature_set(direct, feature_loc):
+    feature_all = merge_days(get_full_time()).copy()
+    # df_list = []
 
+    begin = np.array(feature_loc).min()
+    new_colname_list = [item - begin for item in feature_loc]
+
+    col_list = [col for col in feature_all.columns if direct in col]
+    train_loc = [f'{direct}_{item}' for item in feature_loc]
+
+    temp = feature_all.loc[:, train_loc]
+    temp.columns = new_colname_list
+
+    temp = pd.concat([feature_all.loc[:, ['stationID', 'time_ex']], temp], axis=1)
+
+    return temp
+
+
+partition_size = 6.0
+partition_num = int(np.ceil(144 / partition_size))
+print(partition_num)
+
+
+def get_train_test(stationID, partitionID, direct):
+    train = get_train_set(direct).copy()
+    # print(train.shape)
+    train = train.loc[(train.stationID == stationID) & (train.time_ex // partition_size == partitionID)]
+
+    test = get_test_set(direct).copy()
+    # print(test.shape)
+    test = test.loc[(test.stationID == stationID) & (test.time_ex // partition_size == partitionID)]
+
+    return train, test
+
+
+def get_sub_tmp():
+    submit = pd.read_csv(submit_file)
+    submit['startTime'] = pd.to_datetime(submit['startTime'])
+    submit.head()
+    submit['time_ex'] = (submit['startTime'] - pd.to_datetime('2019-01-29 00:00:00')).dt.seconds // (60 * 10)
+
+    submit = submit.set_index(['stationID', 'time_ex'])
+    # submit = submit.drop(axis=1, columns=['inNums', 'outNums'])
+    # submit.head()
+    return submit
 
 if __name__ == '__main__':
     print(summary_to_sub_level('2019-01-03'))

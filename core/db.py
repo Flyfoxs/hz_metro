@@ -35,7 +35,8 @@ def insert(row):
                     predict   ,
                     p,
                     d,
-                    q
+                    q,
+                    day_str
                     )
                     values
                     (    
@@ -48,7 +49,8 @@ def insert(row):
                     {predict},
                     {p},
                     {d},
-                    {q}            
+                    {q},
+                    '{day_str}'          
                    )
                     """.format(**row, version=version)
         cur = db.cursor()
