@@ -128,9 +128,6 @@ def get_feature_set(direct, feature_loc):
     return temp
 
 
-partition_size = 6.0
-partition_num = int(np.ceil(144 / partition_size))
-print(partition_num)
 
 
 def get_train_test(stationID, partitionID, direct):

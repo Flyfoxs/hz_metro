@@ -9,153 +9,55 @@ from statsmodels.tsa.arima_model import ARIMA
 
 from core.db import *
 
-#plt.style.use('fivethirtyeight')
+from sklearn.linear_model import Ridge
 
-# Define the p, d and q parameters to take any value between 0 and 2
+def get_res(stationID, partition_num, direct):
+    train, test = get_train_test(stationID, partition_num, direct)
 
+    logger.info(f'train:{len(train):03}, test:{len(test):03}, for {(stationID, partition_num, direct)}')
+    feature_len = len(test_feature_set)
 
+    y = train.iloc[:, -1]
+    X = train.iloc[:, -feature_len:-1]
+    clf = Ridge(alpha=1.0)
 
-def get_estimate_val():
-    time_list = get_full_time('2019-01-19')
-    # time_list.append('2019-01-28')
-    print(time_list)
-    merge_res = merge_days(time_list)
-    merge_res['total'] = merge_res.sum(axis=1)
-    merge_res.sort_values('total')
-    merge_res.head()
-    merge_res = merge_res.fillna(0)
-    return merge_res.sample(frac=0.1,random_state=1)
+    if len(X) == 0:
+        return None
+    clf.fit(X, y)
 
-def estimate_paras(pdq):
+    logger.info(f'{(stationID, partition_num, direct)} Ridge is {clf.coef_}')
 
-    warnings.filterwarnings("ignore")  # specify to ignore warning messages
-
-
-    sample = get_estimate_val().sample(10)
-    col_list = [col for col in sample.columns if 'in' in col]
-    for index, X  in sample[col_list].iterrows():
-
-        # X = series.values
-        size = len(X) - 1
-        train, test = X[0:size], X[size:len(X)]
-        history = [x for x in train]
-        res = []
-        print(f'index:{index}, Total:{len(pdq)},train_len:{len(train)} test_len:{len(test)}')
-        for sn, order in enumerate(pdq):
-            try:
-                #         print()
-                predictions = list()
-                for t in range(len(test)):
-                    model = ARIMA(history, order=order)  # (5,1,0)
-                    model_fit = model.fit(disp=0)
-                    output = model_fit.forecast()
-                    yhat = output[0]
-                    predictions.append(yhat)
-                    obs = test[t]
-                    history.append(obs)
-                    # print('predicted=%f, expected=%f' % (yhat, obs))
-                # print(len(test), len(predictions),  )
-                error = mean_squared_error(test, predictions)
-                res.append((error, order))
-                if error < 10:
-                    print(f'{sn:03}, Test MSE: {error:6.2f}, {order}')
-                    # plot
-                    #             pyplot.plot(test)
-                    #             pyplot.plot(predictions, color='red')
-                    #             pyplot.show()
-            except  Exception as e:
-                # print(f'{order} process incorrect')
-                pass
-
-        res = sorted(res, key=lambda val: val[0])
-        print(res)
-    return res
+    res = clf.predict(test.iloc[:, -feature_len:-1])
+    test['res'] = res
+    test = test.set_index(['stationID', 'time_ex'])
+    return test
 
 
-@timed()
-def process_partition(paras):
-    from numpy.linalg import LinAlgError
-    day, direct, parition_id = paras
-    merge_res = merge_days(get_full_time(day))
-    merge_res = merge_res.fillna(0)
-    merge_res = merge_res.loc[ merge_res.time_ex%partition_num==parition_id ]
+def main():
+    sub = get_sub_tmp()
+    sub['in'] = None
+    sub['out'] = None
+    print(sub.columns)
+    for direct in ['in', 'out']:
+        for stationID in range(81):
+            logger.info(f'{direct}, {stationID}')
+            for partitionid in range(partition_num):
+                res = get_res(stationID, partitionid, direct)
+                #             print(sub.loc[sub.index.isin(res.index), direct].shape)
+                #             print(res.shape)
 
-    for index, row in merge_res.iterrows():
-        pdq = get_pdq()
-        print(f'index:{index}, Total:{len(pdq)}')
+                if res is not None:
+                    sub.loc[sub.index.isin(res.index), direct] = res.res
+                    # logger.info(len(res))
+                else:
+                    logger.error(f'Can not find data for {(stationID, partitionid, direct)}')
 
-        for sn, order in enumerate(pdq):
-            res = {}
-            res['p'], res['d'], res['q'] = order
-            res['day'] = 1+(pd.to_datetime(day) - pd.to_datetime('2019-01-01')).days
-            res['day_str'] = day
-            res['week_day'] = pd.to_datetime(day).weekday()
-            res['stationID'] = row['stationID']
-            res['time_ex'] = row['time_ex']
-            res['direct'] = direct
-
-            col_list = [col for col in merge_res.columns if direct in col]
-            # print(col_list)
-            X = row.loc[col_list]
-            size = len(X) - 1
-            train, test = X[0:size], X[size:len(X)]
-            history = [x for x in train]
-            # res = []
-
-            try:
-                predictions = list()
-
-                model = ARIMA(history, order=order)  # (5,1,0)
-                model_fit = model.fit(disp=0)
-                output = model_fit.forecast()
-                yhat = output[0]
-                predictions.append(yhat)
-                obs = test[0]
-                # print(direct)
-                res[f'obs'] = obs
-                res[f'predict'] = round(yhat[0], 2)
-
-                history.append(obs)
-                # print('predicted=%f, expected=%f' % (yhat, obs))
-                # print(len(test), len(predictions),  )
-                error = mean_squared_error(test, predictions)
-                # res.append((error, order))
-                print(f"{index:06},{direct.rjust(3,' ')},  [{error:04.1f}], {order}, {obs}, {yhat[0]:06.2f}")
-            except  ValueError as e:
-                logger.debug(f'pdq:{order} incorrect ')
-                # logger.exception(e)
-                res = {}
-
-            except  LinAlgError as e:
-                logger.debug(f'pdq:{order} incorrect, SVD did not converge')
-                res = {}
-            insert(res)
-            # res = sorted(res, key=lambda val: val[0])
-            print(index, res)
-    return len(merge_res)
-
-
-def get_pdq():
-    p = range(4, 8)
-    d = range(0, 3)
-    q = range(0, 8)
-
-    # Generate all different combinations of p, q and q triplets
-    pdq = list(itertools.product(p, d, q))
-
-    return pdq
+    sub.inNums =   sub['in'].astype(float).round()
+    sub.outNums =  sub['out'].astype(float).round()
+    sub.where(sub>0, 0)
+    sub = sub.reset_index()
+    sub[sub_col].to_csv(f'./output/Ridge_p_num_{partition_num}_{int(time.time() % 10000000)}.csv',index=None)
 
 if __name__ == '__main__':
 
-    day_list = ['2019-01-19']
-    direct = ['in','out']
-    partition_id = range(partition_num)
-
-    para_list = list(itertools.product(day_list, direct, partition_id))
-    try:
-        pool = ThreadPool(thred_num)
-        logger.info(f'There are {len(para_list)} para need to process  with {thred_num} threds')
-        pool.map(process_partition, para_list, chunksize=np.random.randint(1,64))
-
-    except Exception as e:
-        logger.exception(e)
+    main()
