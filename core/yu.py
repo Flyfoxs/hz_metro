@@ -8,6 +8,7 @@ warnings.filterwarnings('ignore')
 from file_cache.utils.util_pandas import *
 from file_cache.cache import file_cache
 from file_cache.utils.util_log import *
+import os
 
 path = 'input'
 
@@ -293,7 +294,7 @@ def main(sub_model = False):
     test_day = test.day.max()
     logger.info(f'vali_day:{vali_day},test_day:{test_day}')
     avg = (in_score + out_score) / 2
-    logger.info(f'in_score:{avg:06.4f}, {in_score:06.4f}@{in_iter}, out_score:{out_score:06.4f}@{out_iter}')
+    logger.info(f'avg:{avg:06.4f}, {in_score:06.4f}@{in_iter}, out_score:{out_score:06.4f}@{out_iter}')
 
     if sub_model:
         sub = pd.read_csv(path + '/Metro_testA/testA_submit_2019-01-29.csv')
