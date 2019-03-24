@@ -1,7 +1,8 @@
-import lightgbm as lgb
 import warnings
 
 import lightgbm as lgb
+from core.config import *
+from sklearn.model_selection import KFold
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
 warnings.filterwarnings('ignore')
@@ -126,20 +127,12 @@ def get_refer_day(d):
     sn_map = dict(zip(sn[1:], sn[:-1]))
     return sn_map[d]
 
+def get_columns(data):
+    return [f for f in data.columns if f not in ['weekend', 'inNums_next', 'outNums_next', 'time_ex']]
 
-def get_train_test(data):
-    # 剔除周末,并修改为连续时间
-    data = data[(data.day != 5) & (data.day != 6)]
-    data = data[(data.day != 12) & (data.day != 13)]
-    data = data[(data.day != 19) & (data.day != 20)]
-    data = data[(data.day != 26) & (data.day != 27)]
 
+def attach_label(data):
     tmp = data.copy()
-    # tmp_df = tmp[tmp.day==1]
-    # tmp_df['day'] = tmp_df['day'] - 1
-    # print(tmp_df.shape)
-    # tmp = pd.concat([tmp, tmp_df], axis=0, ignore_index=True)
-    # print(tmp.shape)
     tmp['day'] = tmp['day'].apply(get_refer_day)
     stat_columns = ['inNums', 'outNums']
     for f in stat_columns:
@@ -150,6 +143,22 @@ def get_train_test(data):
     logger.info((data.shape, tmp.shape))
     data = data.merge(tmp, on=['stationID', 'day', 'hour', 'minute'], how='left')
     data.fillna(0, inplace=True)
+    return data
+
+
+def summary_data(data):
+    # 剔除周末,并修改为连续时间
+    data = data[(data.day != 5) & (data.day != 6)]
+    data = data[(data.day != 12) & (data.day != 13)]
+    data = data[(data.day != 19) & (data.day != 20)]
+    data = data[(data.day != 26) & (data.day != 27)]
+
+    # tmp_df = tmp[tmp.day==1]
+    # tmp_df['day'] = tmp_df['day'] - 1
+    # print(tmp_df.shape)
+    # tmp = pd.concat([tmp, tmp_df], axis=0, ignore_index=True)
+    # print(tmp.shape)
+
 
     tmp = data.groupby(['stationID', 'week', 'hour', 'minute'], as_index=False)['inNums'].agg({
         'inNums_whm_max': 'max',
@@ -173,138 +182,131 @@ def get_train_test(data):
     data = data.merge(tmp, on=['stationID', 'week', 'hour'], how='left')
 
     tmp = data.groupby(['stationID', 'week', 'hour'], as_index=False)['outNums'].agg({
-        # 'outNums_wh_max'    : 'max',
-        # 'outNums_wh_min'    : 'min',
+        'outNums_wh_max'    : 'max',
+        'outNums_wh_min'    : 'min',
         'outNums_wh_mean': 'mean'
     })
     data = data.merge(tmp, on=['stationID', 'week', 'hour'], how='left')
+    return data
 
-    all_days = sorted(data.day.drop_duplicates().values.astype(int))
-    logger.info(f'len:{len(all_days)},list:{all_days}')
 
-    last_day = all_days[-1]
-    vali_day = 25  # 25 #21
+def horizontal_data(data, index, length=5 ):
+    data = data.copy()
+    #print(data.shape)
+    day_list = select_list[index:index+length]
+    logger.info(f'get {day_list} for {index}, len:{length}')
+    #Don't rename the begin day
+    def rename_with_index(data,sn):
+        cur_day = int(data.day.max() )
+        if cur_day != day_list[-1]:
+            data.columns = [f'{item}_{sn}'  for item in data.columns]
+        return data.reset_index(drop=True)
+
+    feature =  pd.concat([ rename_with_index(data.loc[data.day==item], sn) for sn, item in enumerate(day_list)], axis=1)
+
+    return feature
+
+
+def get_train_test(data):
+    data = summary_data(data.copy())
+    all_columns = get_columns(data)
+    data = data[all_columns]
+
+    feature_len = len(select_list) - 4
+    data = pd.concat( [horizontal_data(data, index, 5)  for index in range(feature_len)])
+
+    logger.info(f'len:{len(select_list)},list:{select_list}')
+
     test_day = 28
 
-    # predict_day = last_day + 1
 
-    all_columns = [f for f in data.columns if f not in ['weekend', 'inNums_next', 'outNums_next', 'time_ex']]
-    ### all data
-    all_data = data[data.day != test_day]
-    # all_data['day'] = all_data['day'].apply(recover_day)
-    X_data = all_data[all_columns]#.values
+    X_data = data[data.day != test_day]#.values
+    all_data = attach_label(X_data)
 
-    train = data[~data.day.isin([vali_day, test_day])]
-    # train['day'] = train['day'].apply(recover_day)
-    X_train = train[all_columns]#.values
 
-    valid = data[data.day == vali_day]
-    # valid['day'] = valid['day'].apply(recover_day)
-    X_valid = valid[all_columns]#.values
+    X_test = data[data.day == test_day]#[all_columns]#.values
 
-    test = data[data.day == test_day]
-    X_test = test[all_columns]#.values
+    return all_data, X_data,  X_test
 
-    return all_data, X_data, train, X_train, valid, X_valid, test, X_test
+
+
+@timed()
+def train(X_data,  y_data,  X_test, ):
+    all_columns = get_columns(X_data)
+
+    num_fold = 5
+    folds = KFold(n_splits=num_fold, shuffle=True, random_state=15)
+    oof = np.zeros(len(y_data))
+    predictions = np.zeros(len(X_test))
+    #start = time.time()
+    feature_importance_df = pd.DataFrame()
+
+    for fold_, (trn_idx, val_idx) in enumerate(folds.split(X_data.values, y_data.values)):
+        logger.info("fold n°{}".format(fold_))
+        trn_data = lgb.Dataset(X_data.iloc[trn_idx], y_data.iloc[trn_idx])
+        val_data = lgb.Dataset(X_data.iloc[val_idx], y_data.iloc[val_idx], reference=trn_data)
+
+        params = {
+            'boosting_type': 'gbdt',
+            'objective': 'regression',
+            'metric': 'mae',
+            'num_leaves': 63,
+            'learning_rate': 0.01,
+            'feature_fraction': 0.9,
+            'bagging_fraction': 0.9,
+            'bagging_seed': 0,
+            'bagging_freq': 1,
+            'verbose': 1,
+            'reg_alpha': 1,
+            'reg_lambda': 2
+        }
+        num_round = 10000
+        clf = lgb.train(params,
+                        trn_data,
+                        num_round,
+                        valid_sets=[trn_data, val_data],
+                        verbose_eval=5000,
+                        early_stopping_rounds=200)
+
+        oof[val_idx] = clf.predict(X_data.iloc[val_idx], num_iteration=clf.best_iteration)
+
+        fold_importance_df = pd.DataFrame()
+        fold_importance_df["feature"] =  all_columns
+        fold_importance_df["importance"] = clf.feature_importance()
+        fold_importance_df["fold"] = fold_ + 1
+        feature_importance_df = pd.concat([feature_importance_df, fold_importance_df], axis=0)
+
+        predictions += clf.predict(X_test[all_columns], num_iteration=clf.best_iteration) / folds.n_splits
+    predictions = predictions/num_fold
+    score = np.abs(oof - y_data.values).mean()
+    return predictions, score
 
 @timed()
 def main(sub_model = False):
     data = get_data()
-    all_data, X_data, train, X_train, valid, X_valid, test, X_test = \
+    all_data, X_data,  X_test = \
         get_train_test(data)
 
-    params = {
-        'boosting_type': 'gbdt',
-        'objective': 'regression',
-        'metric': 'mae',
-        'num_leaves': 63,
-        'learning_rate': 0.01,
-        'feature_fraction': 0.9,
-        'bagging_fraction': 0.9,
-        'bagging_seed': 0,
-        'bagging_freq': 1,
-        'verbose': 1,
-        'reg_alpha': 1,
-        'reg_lambda': 2
-    }
-
-    ######################################################inNums
-    y_train = train['inNums_next']
-    y_valid = valid['inNums_next']
     y_data = all_data['inNums_next']
+    inNums, in_score = train(X_data,  y_data,  X_test)
 
-    vali_day = X_valid.day.max()
-
-    logger.info((vali_day, X_train.shape, y_train.shape, X_valid.shape, y_valid.shape, X_train.columns))
-
-    lgb_train = lgb.Dataset(X_train, y_train)
-    lgb_evals = lgb.Dataset(X_valid, y_valid, reference=lgb_train)
-    gbm = lgb.train(params,
-                    lgb_train,
-                    num_boost_round=90000,
-                    valid_sets=[lgb_train, lgb_evals],
-                    valid_names=['train', 'valid'],
-                    early_stopping_rounds=200,
-                    verbose_eval=1000,
-                    )
-    in_score = gbm.best_score['valid']['l1']
-    in_iter = gbm.best_iteration
-
-    if sub_model:
-        ### all_data
-        lgb_train = lgb.Dataset(X_data, y_data)
-        gbm = lgb.train(params,
-                        lgb_train,
-                        num_boost_round=gbm.best_iteration,
-                        valid_sets=[lgb_train],
-                        valid_names=['train'],
-                        verbose_eval=1000,
-                        )
-        test['inNums_next'] = gbm.predict(X_test)
-
-    ######################################################outNums
-    y_train = train['outNums_next']
-    y_valid = valid['outNums_next']
     y_data = all_data['outNums_next']
-    lgb_train = lgb.Dataset(X_train, y_train)
-    lgb_evals = lgb.Dataset(X_valid, y_valid, reference=lgb_train)
-    gbm = lgb.train(params,
-                    lgb_train,
-                    num_boost_round=90000,
-                    valid_sets=[lgb_train, lgb_evals],
-                    valid_names=['train', 'valid'],
-                    early_stopping_rounds=200,
-                    verbose_eval=1000,
-                    )
-    out_score = gbm.best_score['valid']['l1']
-    out_iter = gbm.best_iteration
+    outNums, out_score = train(X_data,  y_data,  X_test)
 
-    if sub_model:
-        ### all_data
-        lgb_train = lgb.Dataset(X_data, y_data)
-        gbm = lgb.train(params,
-                        lgb_train,
-                        num_boost_round=gbm.best_iteration,
-                        valid_sets=[lgb_train],
-                        valid_names=['train'],
-                        verbose_eval=1000,
-                        )
-        test['inNums_next'] = gbm.predict(X_test)
 
-    test_day = test.day.max()
-    logger.info(f'vali_day:{vali_day},test_day:{test_day}')
+    test_day = X_test.day.max()
+    logger.info(f'test_day:{test_day}')
     avg = (in_score + out_score) / 2
-    logger.info(f'avg:{avg:06.4f}, {in_score:06.4f}@{in_iter}, out_score:{out_score:06.4f}@{out_iter}')
+    logger.info(f'avg:{avg:06.4f}, {in_score:06.4f}, out_score:{out_score:06.4f}')
 
     if sub_model:
         sub = pd.read_csv(path + '/Metro_testA/testA_submit_2019-01-29.csv')
-        sub['inNums']   = test['inNums_next'].values
-        sub['outNums']  = test['inNums_next'].values
-        # 结果修正
+        sub['inNums']   = inNums
+        sub['outNums']  = outNums
         sub.loc[sub.inNums<0 , 'inNums']  = 0
         sub.loc[sub.outNums<0, 'outNums'] = 0
 
-        file_name = f'output/sub_bs_{vali_day:02}_{avg:06.4f}_{in_score:06.4f}_{out_score:06.4f}_{int(time.time() % 10000000)}.csv'
+        file_name = f'output/sub_kf_{avg:06.4f}_{in_score:06.4f}_{out_score:06.4f}_{int(time.time() % 10000000)}.csv'
         logger.info(file_name)
 
         #13.2464/15.0891
@@ -314,4 +316,4 @@ def main(sub_model = False):
 
 
 if __name__ == '__main__':
-    main(False)
+    main(True)
