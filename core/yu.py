@@ -123,7 +123,7 @@ def get_data():
 
 
 def get_refer_day(d):
-    sn = [item for item in range(40) if item%7 not in [5,6] ]
+    sn = select_list
     sn_map = dict(zip(sn[1:], sn[:-1]))
     return sn_map[d]
 
