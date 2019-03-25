@@ -216,6 +216,7 @@ def horizontal_data(data, index, length=5 ):
 
 def get_train_test(data):
     test_day = 28
+    same_day = False
 
     data = summary_data(data.copy())
     all_columns = get_columns(data)
@@ -225,8 +226,11 @@ def get_train_test(data):
 
     day_len = len(select_list)
     #feature_len = len(select_list) - 4
-    data = pd.concat( [horizontal_data(data, index, 5)  for index in range(day_len%5, day_len, 5)])
 
+    if same_day:
+        data = pd.concat( [horizontal_data(data, index, 5)  for index in range(day_len%5, day_len, 5)])
+    else:
+        data = pd.concat( [horizontal_data(data, index, 5) for index in  range(day_len-4) ])
 
 
 
@@ -274,7 +278,7 @@ def train(X_data,  y_data,  X_test, ):
             #'random_state': 666,
             'seed':666,
         }
-        num_round = 10000
+        num_round = 30000
         clf = lgb.train(params,
                         trn_data,
                         num_round,
@@ -290,8 +294,8 @@ def train(X_data,  y_data,  X_test, ):
         fold_importance_df["fold"] = fold_ + 1
         feature_importance_df = pd.concat([feature_importance_df, fold_importance_df], axis=0)
 
-        predictions += clf.predict(X_test[all_columns], num_iteration=clf.best_iteration) / folds.n_splits
-    predictions = np.around(predictions/num_fold, 4)
+        predictions += clf.predict(X_test[all_columns], num_iteration=clf.best_iteration)
+    predictions = np.around(predictions/folds.n_splits, 4)
     score = np.abs(oof - y_data.values).mean()
     return predictions, score
 
@@ -320,7 +324,7 @@ def main(sub_model = False):
         sub.loc[sub.inNums<0 , 'inNums']  = 0
         sub.loc[sub.outNums<0, 'outNums'] = 0
 
-        file_name = f'output/sub_kf_{avg:06.4f}_{in_score:06.4f}_{out_score:06.4f}_{int(time.time() % 10000000)}.csv'
+        file_name = f'output/sub_kf2_{avg:06.4f}_{in_score:06.4f}_{out_score:06.4f}_{int(time.time() % 10000000)}.csv'
         logger.info(file_name)
 
         #13.2464/15.0891
