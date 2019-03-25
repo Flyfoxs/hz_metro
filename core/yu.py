@@ -214,9 +214,8 @@ def horizontal_data(data, index, length=5 ):
     return feature
 
 
-def get_train_test(data):
+def get_train_test(data,same_day):
     test_day = 28
-    same_day = False
 
     data = summary_data(data.copy())
     all_columns = get_columns(data)
@@ -283,7 +282,7 @@ def train(X_data,  y_data,  X_test, ):
                         trn_data,
                         num_round,
                         valid_sets=[trn_data, val_data],
-                        verbose_eval=5000,
+                        verbose_eval=2000,
                         early_stopping_rounds=200)
 
         oof[val_idx] = clf.predict(X_data.iloc[val_idx], num_iteration=clf.best_iteration)
@@ -301,9 +300,9 @@ def train(X_data,  y_data,  X_test, ):
 
 @timed()
 def main(sub_model = False):
+    same_day = False
     data = get_data()
-    all_data, X_data,  X_test = \
-        get_train_test(data)
+    all_data, X_data,  X_test =  get_train_test(data, same_day)
 
     y_data = all_data['inNums_next']
     inNums, in_score = train(X_data,  y_data,  X_test)
@@ -324,7 +323,7 @@ def main(sub_model = False):
         sub.loc[sub.inNums<0 , 'inNums']  = 0
         sub.loc[sub.outNums<0, 'outNums'] = 0
 
-        file_name = f'output/sub_kf2_{avg:06.4f}_{in_score:06.4f}_{out_score:06.4f}_{int(time.time() % 10000000)}.csv'
+        file_name = f'output/sub_kf_{same_day}_{avg:06.4f}_{in_score:06.4f}_{out_score:06.4f}_{int(time.time() % 10000000)}.csv'
         logger.info(file_name)
 
         #13.2464/15.0891
