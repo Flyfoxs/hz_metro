@@ -111,7 +111,7 @@ def get_data():
     data_list = os.listdir(path + '/Metro_train/')
     for i in range(0, len(data_list)):
         if data_list[i].split('.')[-1] == 'csv':
-            logger.info(data_list[i], i)
+            logger.info((data_list[i], i))
             # df = pd.read_csv()
             df = get_base_features(path + '/Metro_train/' + data_list[i])
             data = pd.concat([data, df], axis=0, ignore_index=True)
@@ -125,14 +125,18 @@ def get_data():
 def get_refer_day(d):
     sn = select_list
     sn_map = dict(zip(sn[1:], sn[:-1]))
-    return sn_map[d]
+    if d not in sn_map:
+        return None
+    else:
+        return sn_map[d]
 
 def get_columns(data):
     return [f for f in data.columns if f not in ['weekend', 'inNums_next', 'outNums_next', 'time_ex']]
 
 
 def attach_label(data):
-    tmp = data.copy()
+    tmp = get_data()
+    tmp['day']= tmp['day'].astype(int)
     tmp['day'] = tmp['day'].apply(get_refer_day)
     stat_columns = ['inNums', 'outNums']
     for f in stat_columns:
@@ -141,6 +145,7 @@ def attach_label(data):
     tmp = tmp[['stationID', 'day', 'hour', 'minute', 'inNums_next', 'outNums_next']]
 
     logger.info((data.shape, tmp.shape))
+    data['day'] = data['day'].astype(int)
     data = data.merge(tmp, on=['stationID', 'day', 'hour', 'minute'], how='left')
     data.fillna(0, inplace=True)
     return data
@@ -194,9 +199,11 @@ def horizontal_data(data, index, length=5 ):
     data = data.copy()
     #print(data.shape)
     day_list = select_list[index:index+length]
+    logger.info(f'Avaiable days:{select_list}')
     logger.info(f'get {day_list} for {index}, len:{length}')
     #Don't rename the begin day
     def rename_with_index(data,sn):
+        #print(data.head(3))
         cur_day = int(data.day.max() )
         if cur_day != day_list[-1]:
             data.columns = [f'{item}_{sn}'  for item in data.columns]
@@ -208,16 +215,20 @@ def horizontal_data(data, index, length=5 ):
 
 
 def get_train_test(data):
+    test_day = 28
+
     data = summary_data(data.copy())
     all_columns = get_columns(data)
     data = data[all_columns]
 
-    feature_len = len(select_list) - 4
-    data = pd.concat( [horizontal_data(data, index, 5)  for index in range(feature_len)])
-
     logger.info(f'len:{len(select_list)},list:{select_list}')
 
-    test_day = 28
+    day_len = len(select_list)
+    #feature_len = len(select_list) - 4
+    data = pd.concat( [horizontal_data(data, index, 5)  for index in range(day_len%5, day_len, 5)])
+
+
+
 
 
     X_data = data[data.day != test_day]#.values
@@ -246,6 +257,7 @@ def train(X_data,  y_data,  X_test, ):
         trn_data = lgb.Dataset(X_data.iloc[trn_idx], y_data.iloc[trn_idx])
         val_data = lgb.Dataset(X_data.iloc[val_idx], y_data.iloc[val_idx], reference=trn_data)
 
+        #np.random.seed(666)
         params = {
             'boosting_type': 'gbdt',
             'objective': 'regression',
@@ -258,7 +270,9 @@ def train(X_data,  y_data,  X_test, ):
             'bagging_freq': 1,
             'verbose': 1,
             'reg_alpha': 1,
-            'reg_lambda': 2
+            'reg_lambda': 2,
+            #'random_state': 666,
+            'seed':666,
         }
         num_round = 10000
         clf = lgb.train(params,
@@ -277,7 +291,7 @@ def train(X_data,  y_data,  X_test, ):
         feature_importance_df = pd.concat([feature_importance_df, fold_importance_df], axis=0)
 
         predictions += clf.predict(X_test[all_columns], num_iteration=clf.best_iteration) / folds.n_splits
-    predictions = predictions/num_fold
+    predictions = np.around(predictions/num_fold, 4)
     score = np.abs(oof - y_data.values).mean()
     return predictions, score
 
