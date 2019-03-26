@@ -42,11 +42,56 @@ def get_dummy_feature():
     # (pd.to_datetime(dummy['startTime']) - pd.to_datetime(dummy['startTime']).dt.date.values).dt.seconds // (60 * 10)
 
 
+def get_paytype_feature(date):
+    try:
+        local_file = train_file % date
+        sub = pd.read_csv(local_file)
+    except Exception as e:
+        try:
+            local_file = test_file % date
+            sub = pd.read_csv(local_file)
+        except Exception as e:
+            logger.warning(f'Can not find data for:{date}')
+            local_file = train_file % '2019-01-01'
+            sub = pd.read_csv(local_file, nrows=1).iloc[10:20]
+
+    # print(sub.columns)
+    sub['time'] = pd.to_datetime(sub['time'])
+    sub['time_ex'] = (sub['time'] - pd.to_datetime(date)).dt.seconds // (60 * 10)
+
+    total = sub.groupby(['time_ex', 'stationID']).status.agg({'total': 'count', 'in': 'sum'})
+    total['out'] = total['total'] - total['in']
+
+    sub = sub.groupby(['time_ex', 'stationID', 'payType']).status.agg({'total': 'count', 'in': 'sum'})
+
+    sub['out'] = sub['total'] - sub['in']
+    sub = sub.reset_index()
+    sub = sub.pivot_table(index=['time_ex', 'stationID'], columns=['payType'], values=['total', 'in', 'out'])
+    sub.columns = ['_'.join([str(col) for col in item]) for item in sub.columns]
+
+    sub = sub.reset_index().merge(total.reset_index(), how='left', on=['time_ex', 'stationID'])
+
+    sub = sub.fillna(0)
+
+    for section in ['in', 'out', 'total']:
+
+        for col in [item for item in sub.columns if f'{section}_' in item]:
+            # print(col)
+            sub[f'{col}_p'] = np.around(sub[col] / sub[f'{section}'], 2)
+
+        sub[f'{section}_p'] = sub[f'{section}'] / sub['total']
+
+    del sub['total_p']
+
+    return sub.fillna(0)
+
+
 @timed()
 @file_cache()
 def get_base_features(file_path):
     df = pd.read_csv(file_path)
     df['time'] = pd.to_datetime(df['time'])
+    cur_date = str(df['time'][0].date())
     logger.info('Time is done')
     # df['time_ex'] = ( df['time'] - df['time'].dt.date.values).dt.seconds // (60 * 10)
     # logger.info('Time_ex is done')
@@ -85,14 +130,14 @@ def get_base_features(file_path):
         reset_index(name='nuni_deviceID_of_stationID_hour_minute')
     result = result.merge(tmp, on=['stationID', 'hour', 'minute'], how='left')
 
-    # in,out
-
-
-    #
     result['day_since_first'] = result['day'] - 1
-    result.fillna(0, inplace=True)
+
     del result['sum'], result['count']
 
+    percent_age = get_paytype_feature(cur_date)
+
+    result = result.merge(percent_age, how='left', on=['time_ex','stationID'])
+    result.fillna(0, inplace=True)
     return result
 
 
@@ -300,7 +345,8 @@ def train(X_data,  y_data,  X_test, ):
 
 @timed()
 def main(sub_model = False):
-    same_day = False
+    same_day = True
+    adjust99 = False
     data = get_data()
     all_data, X_data,  X_test =  get_train_test(data, same_day)
 
@@ -318,12 +364,17 @@ def main(sub_model = False):
 
     if sub_model:
         sub = pd.read_csv(path + '/Metro_testA/testA_submit_2019-01-29.csv')
+
+        if adjust99:
+            inNums = (inNums * 99)/inNums.mean()
+            outNums = (outNums * 99)/outNums.mean()
+
         sub['inNums']   = inNums
         sub['outNums']  = outNums
         sub.loc[sub.inNums<0 , 'inNums']  = 0
         sub.loc[sub.outNums<0, 'outNums'] = 0
 
-        file_name = f'output/sub_kf_{same_day}_{avg:06.4f}_{in_score:06.4f}_{out_score:06.4f}_{int(time.time() % 10000000)}.csv'
+        file_name = f'output/sub_kf_{same_day}_{adjust99}_{avg:06.4f}_{in_score:06.4f}_{out_score:06.4f}_{int(time.time() % 10000000)}.csv'
         logger.info(file_name)
 
         #13.2464/15.0891

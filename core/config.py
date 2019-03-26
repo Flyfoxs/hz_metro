@@ -9,13 +9,20 @@ thred_num = 10
 partition_size = 6.0 * 4
 partition_num = int(np.ceil(144 / partition_size))
 
+select_list = [1,2,3,4 , #5 , 6,
+               7,8,9,10,11,  #12, 13,
+               14, 15, 16, 17, 18,  #19 , 20
+               21, 22, 23, 24, 25,   #26, 27,
+               28
+               ]
+
+select_list =  [item for item in range(1,29) if item%7 not in [5,6] ]
+
 test_feature_set = [22, 25, 28, 29]
 
 
 sub_col = ['stationID',	'startTime',	'endTime',	'outNums',	'inNums']
 
-mysql_pass = 'Had00p!!'
-#11664
 
 gp_list = ['time_ex', 'stationID', 'status']
 
